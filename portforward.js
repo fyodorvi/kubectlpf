@@ -6,8 +6,11 @@ const exec = require('child_process').exec;
 const fs = require('fs');
 const chalk = require('chalk');
 const timestamp = require('time-stamp');
+const _ = require('lodash');
 
-let portMaps;
+let systemDefinedPods;
+let localDefinedPods;
+let namespace;
 
 const childProcesses = [];
 
@@ -20,18 +23,27 @@ function resolveHome(filepath) {
 }
 
 try {
-    portMaps = JSON.parse(fs.readFileSync(resolveHome('~/.kube/pods.json'), 'utf-8'));
+    systemDefinedPods = JSON.parse(fs.readFileSync(resolveHome('~/.kube/pods.json'), 'utf-8'));
 }
 catch (e) {
-    portMaps = {};
+    systemDefinedPods = {};
 }
+
+try {
+	localDefinedPods = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'pods.json'), 'utf-8'));
+}
+catch (e) {
+	localDefinedPods = {}
+}
+
+_.merge(systemDefinedPods, localDefinedPods);
 
 function timeLog (line) {
 	console.log(`[${chalk.grey(timestamp('HH:mm:ss'))}] ${line}`);
 }
 
 function getPods(callback) {
-    exec('kubectl get pods', function(error, stdout, stderr){
+    exec(`kubectl get pods${ namespace ? ' --namespace='+namespace : ''}`, function(error, stdout, stderr){
         if (error) {
             throw stderr;
         }
@@ -55,14 +67,14 @@ function getPodId(pods, podName, silent){
 			if (silent) {
 				return false;
 			} else {
-				throw `Could not find pod ${chalk.cyan(podName)}, available pods: \n${pods}`;
+				throw `Could not find pod ${chalk.cyan(podName)}, available pods${ namespace ? ' (namespace: '+namespace+')' : ''}: \n${pods}`;
 			}
         }
     }
 }
 
 function portForwardPod(pod) {
-    const child = exec(`kubectl port-forward ${pod.id} ${pod.port}`);
+    const child = exec(`kubectl port-forward ${pod.id} ${pod.port}${ namespace ? ' --namespace='+namespace : ''}`);
 
     child.stdout.on('data', function(data) {
         processKubectlLog(data, pod, child);
@@ -83,7 +95,7 @@ function processKubectlLog(logLine, pod, child) {
 			pod.initialized = true;
 			timeLog(`Started port forwarding for ${chalk.cyan(pod.name)} on port ${chalk.magenta(pod.port)}`);
 		}
-    } else if (logLine.match(/Handling connectionx/)) {
+    } else if (logLine.match(/Handling connection/)) {
 		timeLog(`Processing request for ${chalk.cyan(pod.name)}`);
 	} else if (logLine.match(/an error occurred forwarding/)) {
 		timeLog(`Pod ${chalk.cyan(pod.name)} appears to be dead. Trying to initialize again...`);
@@ -109,7 +121,7 @@ function processKubectlLog(logLine, pod, child) {
 					}
 				}
 			});
-		}
+		};
 		tryReinitPod();
     } else {
     	if (!pod.initialized) {
@@ -124,41 +136,69 @@ function processKubectlLog(logLine, pod, child) {
 }
 
 try {
-    if (process.argv.length <= 2) {
-        throw 'Please provide pod names';
-    } else {
-        const pods = [];
-        for (let i = 2; i < process.argv.length; i++) {
-            let podName = process.argv[i];
-            let podPort = portMaps[podName];
-			const split = podName.split(':');
-            if (split.length > 1) {
-            	podName = split[0];
-                podPort = split[1];
-            }
-            if (!portMaps[podName] && !podPort) {
-                throw `Please specify port for ${chalk.cyan(podName)}`;
-            } else {
-                pods.push({
-                    name: podName,
-                    port: podPort
-                });
-            }
-        }
-        getPods(function (rawPods) {
-        	try {
-				pods.forEach((pod, key) => {
-					pods[key].id = getPodId(rawPods, pod.name);
-				});
-				timeLog('Initializing...');
-				pods.forEach((pod) => {
-					portForwardPod(pod);
-				});
-			} catch (error) {
-				timeLog(chalk.red(error));
-			}
-        });
-    }
+	const args = process.argv.slice(2);
+	let podsToExclude = [];
+	let podsToForward = [];
+
+	args.forEach(arg => {
+		if (arg.match(/--namespace=[a-zA-z]*?/)) {
+			namespace = arg.split('=')[1];
+		} else if (arg.match(/--exclude=(?:[\-a-zA-Z]*,?)*/)) {
+			podsToExclude = arg.split('=')[1].split(',').map((pod) => pod.trim());
+		} else {
+			podsToForward.push(arg);
+		}
+	});
+
+	if (!podsToForward.length) {
+		if (!_.isEmpty(localDefinedPods)) {
+			timeLog('Forwarding ports for pods from pods.json');
+			podsToForward = Object.keys(localDefinedPods);
+		} else {
+			throw 'No pod names provided';
+		}
+	}
+
+	const pods = [];
+
+	podsToForward.forEach((podName) => {
+		if (podsToExclude.indexOf(podName) !== -1) {
+			return;
+		}
+		let podPort = systemDefinedPods[podName];
+		const split = podName.split(':');
+		if (split.length > 1) {
+			podName = split[0];
+			podPort = split[1];
+		}
+		if (!systemDefinedPods[podName] && !podPort) {
+			throw `Please specify port for ${chalk.cyan(podName)}`;
+		} else {
+			pods.push({
+				name: podName,
+				port: podPort
+			});
+		}
+	});
+
+	if (pods.length == 0) {
+		throw 'No pod names provided';
+	}
+
+	timeLog('Initializing...');
+	getPods(function (rawPods) {
+		try {
+			pods.forEach((pod, key) => {
+				pods[key].id = getPodId(rawPods, pod.name);
+			});
+			pods.forEach((pod) => {
+				portForwardPod(pod);
+			});
+		} catch (error) {
+			timeLog(chalk.red(error));
+		}
+	});
+
 } catch (error) {
 	timeLog(chalk.red(error));
 }
