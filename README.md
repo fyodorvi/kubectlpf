@@ -1,6 +1,6 @@
 # Kubectlpf
 
-A small utility to do batch forwarding for kubectl pods.
+A small utility to do batch forwarding for kubectl pods. With auto-restart feature if pod appears to be dead.
 
 ## Installation
 
