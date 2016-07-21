@@ -12,7 +12,7 @@ let systemDefinedPods;
 let localDefinedPods;
 let namespace;
 
-const childProcesses = [];
+const runningPods = [];
 
 const path = require('path');
 function resolveHome(filepath) {
@@ -51,12 +51,12 @@ function getPods(callback) {
     });
 }
 
-function getPodId(pods, podName, silent){
-    const match = (new RegExp('('+podName+'[-\\da-z]*).*(Running)', 'g')).exec(pods);
+function getPodId(rawPods, podName, silent){
+    const match = (new RegExp('('+podName+'[-\\da-z]*).*(Running)', 'g')).exec(rawPods);
     if (match) {
         return match[1];
     } else {
-        const errorMatch = (new RegExp('('+podName+'[-\\da-z]*)[\\s]*[\\d]\\/[\\d][\\s]*([a-zA-Z]*)[\\s]', 'g')).exec(pods);
+        const errorMatch = (new RegExp('('+podName+'[-\\da-z]*)[\\s]*[\\d]\\/[\\d][\\s]*([a-zA-Z]*)[\\s]', 'g')).exec(rawPods);
         if (errorMatch) {
 			if (silent) {
 				return false;
@@ -67,7 +67,7 @@ function getPodId(pods, podName, silent){
 			if (silent) {
 				return false;
 			} else {
-				throw `Could not find pod ${chalk.cyan(podName)}, available pods${ namespace ? ' (namespace: '+namespace+')' : ''}: \n${pods}`;
+				throw `Could not find pod ${chalk.cyan(podName)}, available pods${ namespace ? ' (namespace: '+namespace+')' : ''}: \n${rawPods}`;
 			}
         }
     }
@@ -86,7 +86,44 @@ function portForwardPod(pod) {
         //nothing for now
     });
 
-	childProcesses.push(child);
+	pod.childProcess = child;
+}
+
+function healthCheck() {
+	getPods((rawPods) => {
+		runningPods.forEach(pod => {
+			if (pod.initialized) {
+				const match = (new RegExp('('+pod.id+').*(Running)', 'g')).exec(rawPods);
+				if (!match) {
+					pod.childProcess.kill();
+					pod.initialized = false;
+					timeLog(`Detected death of ${chalk.cyan(pod.name)}. Trying to restart port forwarding...`);
+					let attempt = 0;
+					const maxAttempt = 20;
+					const attemptDuration = 5000;
+					const tryReinitPod = () => {
+						getPods((rawPods) => {
+							const podId = getPodId(rawPods, pod.name, true);
+							if (podId) {
+								pod.id = podId;
+								portForwardPod(pod);
+							} else {
+								if (attempt >= maxAttempt) {
+									timeLog(chalk.red(`Failed to resume forwarding for ${chalk.cyan(pod.name)}`));
+									process.exit();
+								} else {
+									timeLog(`Waiting for ${chalk.cyan(pod.name)} to come up (${attempt})...`);
+									attempt++;
+									setTimeout(tryReinitPod, attemptDuration)
+								}
+							}
+						});
+					};
+					tryReinitPod();
+				}
+			}
+		});
+	});
 }
 
 function processKubectlLog(logLine, pod, child) {
@@ -98,31 +135,8 @@ function processKubectlLog(logLine, pod, child) {
     } else if (logLine.match(/Handling connection/)) {
 		timeLog(`Processing request for ${chalk.cyan(pod.name)}`);
 	} else if (logLine.match(/an error occurred forwarding/)) {
-		timeLog(`Pod ${chalk.cyan(pod.name)} appears to be dead. Trying to initialize again...`);
-		childProcesses.splice(childProcesses.indexOf(child));
-		child.kill();
-		pod.initialized = false;
-		let attempt = 0;
-		const maxAttempt = 10;
-		const timeOutDuration = 5000;
-		const tryReinitPod = () => {
-			getPods((rawPods) => {
-				const podId = getPodId(rawPods, pod.name, true);
-				if (podId) {
-					pod.id = podId;
-					portForwardPod(pod);
-				} else {
-					if (attempt >= maxAttempt) {
-						timeLog(chalk.red(`Failed to resume forwarding for ${chalk.cyan(pod.name)}`));
-					} else {
-						timeLog(`Waiting for ${chalk.cyan(pod.name)} to come up (${maxAttempt - attempt})...`);
-						attempt++;
-						setTimeout(tryReinitPod, timeOutDuration)
-					}
-				}
-			});
-		};
-		tryReinitPod();
+		timeLog(`Unable to process request for ${chalk.cyan(pod.name)}`);
+		healthCheck();
     } else {
     	if (!pod.initialized) {
     		// must be true error message
@@ -139,12 +153,15 @@ try {
 	const args = process.argv.slice(2);
 	let podsToExclude = [];
 	let podsToForward = [];
+	let healthInterval = 5000;
 
 	args.forEach(arg => {
 		if (arg.match(/--namespace=[a-zA-z]*?/)) {
 			namespace = arg.split('=')[1];
 		} else if (arg.match(/--exclude=(?:[\-a-zA-Z]*,?)*/)) {
 			podsToExclude = arg.split('=')[1].split(',').map((pod) => pod.trim());
+		} else if (arg.match(/--health-interval=[\d]*?/)) {
+			healthInterval = arg.split('=')[1];
 		} else {
 			podsToForward.push(arg);
 		}
@@ -159,7 +176,6 @@ try {
 		}
 	}
 
-	const pods = [];
 
 	podsToForward.forEach((podName) => {
 		if (podsToExclude.indexOf(podName) !== -1) {
@@ -174,26 +190,27 @@ try {
 		if (!systemDefinedPods[podName] && !podPort) {
 			throw `Please specify port for ${chalk.cyan(podName)}`;
 		} else {
-			pods.push({
+			runningPods.push({
 				name: podName,
 				port: podPort
 			});
 		}
 	});
 
-	if (pods.length == 0) {
+	if (runningPods.length == 0) {
 		throw 'No pod names provided';
 	}
 
 	timeLog('Initializing...');
 	getPods(function (rawPods) {
 		try {
-			pods.forEach((pod, key) => {
-				pods[key].id = getPodId(rawPods, pod.name);
+			runningPods.forEach((pod, key) => {
+				runningPods[key].id = getPodId(rawPods, pod.name);
 			});
-			pods.forEach((pod) => {
+			runningPods.forEach((pod) => {
 				portForwardPod(pod);
 			});
+			setInterval(healthCheck, healthInterval);
 		} catch (error) {
 			timeLog(chalk.red(error));
 		}
@@ -204,7 +221,11 @@ try {
 }
 
 process.on('exit', () => {
-	childProcesses.forEach((child) => {
-		child.kill();
+	runningPods.forEach((pod) => {
+		try {
+			pod.childProcess.kill();
+		} catch (error) {
+
+		}
 	})
 });
