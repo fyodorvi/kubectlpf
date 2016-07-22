@@ -11,7 +11,7 @@ npm i kubectlpf -g
 ## Usage:
 
 ```
-kubectlf [<podname[:port]>]... [--namepsace=<namespace>] [--exclude=<podname>...] [--health-interval=<number>]
+kubectlpf [<podname[:port]>]... [--namepsace=<namespace>] [--exclude=<podname>...] [--health-interval=<number>]
 ```
 
 Port is optional if you have pods config which should be stored in `~/kube/pods.json`.
@@ -24,4 +24,4 @@ It should have ` podname: port ` format:
 ```
 
 If no podname is provided the script will search for local `pods.json` (same ` podname: port ` format), and run port forward for all of them. Use `exclude` param to exclude some of them for that case.
-User `health-interval` to set custom health check interval in milliseconds (default is `5000`).
+Use `health-interval` to set custom health check interval in milliseconds (default is `5000`).
