@@ -1,6 +1,6 @@
 {
   "name": "kubectlpf",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Batch utility for port-forwarding in kubernetes",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,6 +9,10 @@
   "license": "MIT",
   "bin": {
     "kubectlpf": "portforward.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fyodorvi/kubectlpf.git"
   },
   "dependencies": {
     "chalk": "^1.1.3",
