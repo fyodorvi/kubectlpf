@@ -1,7 +1,7 @@
 {
   "name": "kubectlpf",
-  "version": "0.0.5",
-  "description": "Batch utility for port-forwarding in kubernetes",
+  "version": "0.0.6",
+  "description": "Batch utility for port-forwarding in Kubernetes",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
