@@ -47,7 +47,7 @@ let restartAttempt = 0;
 function getPods(callback) {
     exec(`kubectl get pods${ namespace ? ' --namespace='+namespace : ''}`, function(error, stdout, stderr){
         if (error) {
-			if (stderr.match(/network is unreachable/) || stderr.match(/handshake timeout/) || stderr.match(/network is down/)) {
+			if (stderr.match(/network is unreachable/) || stderr.match(/handshake timeout/) || stderr.match(/network is down/) || stderr.match(/i\/o timeout/)) {
 				timeLog(`Network error, restarting (${restartAttempt})...`);
 				restartAttempt++;
 				runningPods.forEach(pod => {
