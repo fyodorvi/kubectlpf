@@ -11,6 +11,7 @@ const _ = require('lodash');
 let systemDefinedPods;
 let localDefinedPods;
 let namespace;
+let kubeConfig;
 
 const runningPods = [];
 
@@ -45,7 +46,7 @@ function timeLog (line) {
 let restartAttempt = 0;
 
 function getPods(callback) {
-    exec(`kubectl get pods${ namespace ? ' --namespace='+namespace : ''}`, function(error, stdout, stderr){
+    exec(`kubectl get pods${ kubeConfig ? ' --kubeconfig=' + kubeConfig : ''}${ namespace ? ' --namespace='+namespace : ''}`, function(error, stdout, stderr){
         if (error) {
 			if (stderr.match(/network is unreachable/) || stderr.match(/handshake timeout/) || stderr.match(/network is down/) || stderr.match(/i\/o timeout/)) {
 				timeLog(`Network error, restarting (${restartAttempt})...`);
@@ -93,7 +94,7 @@ function getPodId(rawPods, podName, silent){
 }
 
 function portForwardPod(pod) {
-    const child = exec(`kubectl port-forward ${pod.id} ${pod.port}${ namespace ? ' --namespace='+namespace : ''}`);
+    const child = exec(`kubectl port-forward ${pod.id} ${pod.port}${ kubeConfig ? ' --kubeconfig=' + kubeConfig : ''}${ namespace ? ' --namespace='+namespace : ''}`);
 
     child.stdout.on('data', function(data) {
         processKubectlLog(data, pod, child);
@@ -198,7 +199,9 @@ try {
 	let healthInterval = 5000;
 
 	args.forEach(arg => {
-		if (arg.match(/--namespace=[a-zA-z]*?/)) {
+		if (arg.match(/--kubeconfig=[^\s]*?/)) {
+			kubeConfig = arg.split('=')[1];
+		} else if (arg.match(/--namespace=[a-zA-z]*?/)) {
 			namespace = arg.split('=')[1];
 		} else if (arg.match(/--exclude=(?:[\-a-zA-Z]*,?)*/)) {
 			podsToExclude = arg.split('=')[1].split(',').map((pod) => pod.trim());
