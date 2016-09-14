@@ -281,6 +281,14 @@ try {
 
 	timeLog('Initializing...');
 
+	if (kubeConfig) {
+		timeLog(`Using config ${kubeConfig}`);
+	}
+
+	if (namespace) {
+		timeLog(`Using namespace ${namespace}`);
+	}
+
 	const formalInit = () => {
 		getPods(function (error, rawPods) {
 			try {
